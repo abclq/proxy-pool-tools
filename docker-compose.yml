@@ -1,0 +1,66 @@
+name: proxy-pool
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: proxy-redis
+    restart: unless-stopped
+    command: redis-server --save '' --appendonly no
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - proxy-net
+
+  proxy_pool:
+    image: jhao104/proxy_pool:latest
+    container_name: proxy-pool
+    restart: unless-stopped
+    ports:
+      - '5010:5010'
+    entrypoint: ['tini', '--', 'sh', 'proxy_pool.sh', 'start', '--fg']
+    environment:
+      DB_CONN: 'redis://@redis:6379/0'
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - proxy-net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '2'
+
+  dashboard:
+    build: ./dashboard-v2
+    container_name: proxy-dashboard
+    restart: unless-stopped
+    ports:
+      - '5050:5050'
+      - "8080:8080"
+      - "1080:1080"
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,192.168.0.0/16,proxy-pool,proxy-redis"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      PROXY_API: 'http://proxy-pool:5010'
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      proxy_pool:
+        condition: service_started
+    networks:
+      - proxy-net
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '2'
+
+networks:
+  proxy-net:
+    driver: bridge
